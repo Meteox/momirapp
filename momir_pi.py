@@ -79,31 +79,29 @@ def perform_sync():
 def print_card(card_data):
     p = None
     try:
-        # Wir nutzen Serial direkt. QR204 ist oft stabil auf /dev/serial0
+        # Port öffnen
         p = Serial(devfile='/dev/serial0', baudrate=9600, timeout=1.0)
         if not p or not card_data: return
         
         name = card_data.get('name', 'Unknown')
         update_ui("PRINTING...", name[:15])
         
-        # Reset & Init
+        # Reset Drucker (ESC @) - löscht alten Gibberish aus dem Puffer
         p._raw(b'\x1b\x40') 
-        time.sleep(0.1)
+        time.sleep(0.2)
         
-        # Name
+        # Text-Druck
         p.set(align='left', font='a', width=2, height=2)
         p.text(f"{name}\n")
         
-        # Bild
+        # Bild-Druck
         img_rel = card_data['image'].lstrip('/')
         img_path = os.path.join(PI_BASE_DIR, img_rel)
         if os.path.exists(img_path):
             p.set(align='center')
             p.image(img_path)
-            # Nach dem Bild dem Drucker Zeit zum "Atmen" geben (Puffer leeren)
-            time.sleep(0.5) 
+            time.sleep(0.5) # Kurze Pause nach Bild
             
-        # Details
         p.set(align='left', font='a', bold=True, width=1, height=1)
         p.text(f"\n{card_data.get('type_line', '')}\n")
         p.text("-" * 32 + "\n")
@@ -121,7 +119,7 @@ def print_card(card_data):
         print(f"Print error: {e}")
     finally:
         if p:
-            p.close()
+            p.close() # Port schließen, um ihn für andere frei zu machen
         update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
 
 def get_local_random(category, cmc=None):
@@ -145,16 +143,14 @@ update_ui("MOMIR VIG 3.1", "READY")
 
 try:
     while True:
-        # 1. POLL SERVER
         try:
-            r = requests.get(f"{SERVER_URL}/api/pi_poll", params={"token": AUTH_TOKEN}, timeout=0.1)
+            r = requests.get(f"{SERVER_URL}/api/pi_poll", params={"token": AUTH_TOKEN}, timeout=0.2)
             if r.status_code == 200:
                 cmd = r.json()
                 if cmd.get("type") == "sync": perform_sync()
                 elif cmd.get("type") == "print": print_card(cmd.get("data"))
         except: pass
 
-        # 2. UP BUTTON
         if GPIO.input(UP_PIN) == GPIO.LOW:
             start = time.time()
             while GPIO.input(UP_PIN) == GPIO.LOW: time.sleep(0.05)
@@ -164,7 +160,6 @@ try:
                 current_cmc = min(16, current_cmc + 1)
             update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
 
-        # 3. DOWN BUTTON
         if GPIO.input(DOWN_PIN) == GPIO.LOW:
             start = time.time()
             while GPIO.input(DOWN_PIN) == GPIO.LOW: time.sleep(0.05)
@@ -174,12 +169,10 @@ try:
                 current_cmc = max(1, current_cmc - 1)
             update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
 
-        # 4. PRINT
         if GPIO.input(PRINT_PIN) == GPIO.LOW:
             cat = CATEGORIES[current_cat_idx]
             card = get_local_random(cat, current_cmc if cat != "lands" else None)
-            if card: 
-                print_card(card)
+            if card: print_card(card)
             update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
 
         time.sleep(0.05)
