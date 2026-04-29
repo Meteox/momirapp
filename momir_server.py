@@ -134,22 +134,38 @@ def get_random_land():
 @app.route('/api/search')
 def search_cards():
     query = request.args.get('q', '').lower()
+    cat_filter = request.args.get('cat', 'global_search') # Neu: Filter auslesen
     results = []
+    
     if not query: 
         return jsonify([])
+
     for root, dirs, files in os.walk(DATA_ROOT):
+        # Pfad-Filterung für Tokens und Un-Sets
+        if cat_filter == 'tokens' and 'tokens' not in root:
+            continue
+        if cat_filter == 'unset' and 'unset' not in root:
+            continue
+        # Wenn eine feste Kategorie wie 'creatures' gewählt ist, nur dort suchen
+        if cat_filter not in ['global_search', 'tokens', 'unset'] and cat_filter not in root:
+            continue
+
         for file in files:
             if file.endswith('.json'):
+                # Performance-Fix: Erst Dateinamen prüfen, dann Inhalt
                 if query in file.lower():
-                    with open(os.path.join(root, file), 'r', encoding='utf-8') as f:
-                        try:
+                    try:
+                        with open(os.path.join(root, file), 'r', encoding='utf-8') as f:
                             card = json.load(f)
-                            if query in card['name'].lower():
+                            # Wir prüfen ob query im Namen ODER in der Datei ist
+                            if query in card.get('name', '').lower():
                                 results.append(card)
-                        except:
-                            continue
-            if len(results) >= 20: 
+                    except:
+                        continue
+            if len(results) >= 25: 
                 break
+        if len(results) >= 25: 
+            break
     return jsonify(results)
 
 @app.route('/api/enqueue', methods=['POST'])
