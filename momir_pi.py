@@ -8,6 +8,7 @@ from escpos.printer import Serial
 from luma.core.interface.serial import i2c
 from luma.oled.device import ssd1306
 from luma.core.render import canvas
+from PIL import Image # Wichtig für die BMP-Simulation
 
 # --- CONFIG ---
 SERVER_URL = "http://85.215.219.243:5000"
@@ -25,99 +26,83 @@ try:
     serial_int = i2c(port=1, address=0x3C)
     device = ssd1306(serial_int, width=128, height=32)
     has_screen = True
-except Exception as e:
+except:
     has_screen = False
 
-def update_ui(line1, line2="", progress=None):
+def update_ui(l1, l2=""):
     if has_screen:
         try:
             with canvas(device) as draw:
                 draw.rectangle(device.bounding_box, outline="white")
-                draw.text((5, 4), line1, fill="white")
-                if progress is not None:
-                    bar_width = int((progress / 100) * 118)
-                    draw.rectangle((5, 20, 5 + bar_width, 26), fill="white")
-                else:
-                    draw.text((5, 18), line2, fill="white")
+                draw.text((5, 4), l1, fill="white")
+                draw.text((5, 18), l2, fill="white")
         except: pass
 
-def print_card(card_data):
+# 2. Printer Setup
+try:
+    p = Serial(devfile='/dev/serial0', baudrate=9600, timeout=1.0)
+except:
     p = None
+
+def print_card(data):
+    if not p or not data: return
     try:
-        # Versuch mit Standard-Baudrate 9600
-        p = Serial(devfile='/dev/serial0', baudrate=9600, timeout=1.0)
-        if not p or not card_data: return
+        name = data.get('name', 'Unknown')
+        update_ui("SUMMONING...", name[:15])
         
-        update_ui("DRUCKE...", card_data.get('name', '')[:12])
-        
-        # Nur absolute Standard-Befehle
-        p._raw(b'\x1b\x40') # Reset
-        time.sleep(0.2)
+        # RESET
+        p._raw(b'\x1b\x40') 
+        time.sleep(0.1)
         
         # Name
         p.set(align='left', font='a', width=2, height=2)
-        p.text(f"{card_data.get('name', 'Unknown')}\n")
+        p.text(f"{name}\n")
         
-        # Bild (Nur wenn Datei existiert)
-        img_rel = card_data.get('image', '').lstrip('/')
+        # BILD-LOGIK (Simuliert deine alten BMPs)
+        img_rel = data.get('image', '').lstrip('/')
         img_path = os.path.join(PI_BASE_DIR, img_rel)
+        
         if os.path.exists(img_path):
-            p.set(align='center')
-            p.image(img_path)
-            time.sleep(0.5)
+            # Wir öffnen das PNG und konvertieren es in 1-Bit (Schwarz/Weiß)
+            # Das ist genau das, was deine alten BMPs waren.
+            with Image.open(img_path) as img:
+                img_bw = img.convert("1") # "1" steht für 1-Bit Pixel (Dithering)
+                time.sleep(0.2)
+                p.set(align='center')
+                p.image(img_bw) # Der Drucker bekommt jetzt "fertige" Daten
+                time.sleep(0.5)
             
-        # Text
-        p.set(align='left', font='a', bold=True, width=1, height=1)
-        p.text(f"\n{card_data.get('type_line', '')}\n")
+        # Details
+        p.set(align='left', font='a', bold=True)
+        p.text(f"\n{data.get('type_line', '')}\n")
         p.text("-" * 32 + "\n")
         p.set(align='left', font='a', bold=False) 
-        p.text(f"{card_data.get('oracle_text', '')}\n")
+        p.text(f"{data.get('oracle_text', '')}\n")
         
-        if card_data.get('stats'):
+        if data.get('stats'):
             p.set(align='right', font='a', bold=True)
-            p.text(f"\n[{card_data['stats']}]\n")
+            p.text(f"[{data['stats']}]\n")
             
-        p.text("\n\n\n") # Weniger Vorschub um Papier zu sparen
+        p.text("\n\n\n\n")
         
     except Exception as e:
-        print(f"Fehler: {e}")
-    finally:
-        if p: p.close()
-        update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
+        print(f"Print error: {e}")
 
-def perform_sync():
-    update_ui("SYNC...", "START")
-    try:
-        r = requests.get(f"{SERVER_URL}/api/sync/manifest", timeout=10)
-        if r.status_code == 200:
-            for item in r.json():
-                local = os.path.join(PI_BASE_DIR, item.lstrip('/'))
-                if not os.path.exists(local):
-                    os.makedirs(os.path.dirname(local), exist_ok=True)
-                    res = requests.get(f"{SERVER_URL}/{item}")
-                    with open(local, 'wb') as f: f.write(res.content)
-        update_ui("SYNC OK")
-        time.sleep(1)
-    except: update_ui("SYNC ERROR")
-
-def poll_server():
-    try:
-        r = requests.get(f"{SERVER_URL}/api/pi_poll", params={"token": AUTH_TOKEN}, timeout=0.2)
-        if r.status_code == 200:
-            cmd = r.json()
-            if cmd.get("type") == "sync": perform_sync()
-            elif cmd.get("type") == "print": print_card(cmd.get("data"))
-    except: pass
-
-# --- GPIO ---
+# --- RESTLICHER CODE (GPIO & LOOP) BLEIBT GLEICH ---
 GPIO.setmode(GPIO.BOARD)
 GPIO.setup([UP_PIN, PRINT_PIN, DOWN_PIN], GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
-update_ui("MOMIR VIG", "BEREIT")
+update_ui("MOMIR READY", "V3.2")
 
 try:
     while True:
-        poll_server()
+        try:
+            r = requests.get(f"{SERVER_URL}/api/pi_poll", params={"token": AUTH_TOKEN}, timeout=0.1)
+            if r.status_code == 200:
+                cmd = r.json()
+                if cmd.get("type") == "print": print_card(cmd.get("data"))
+        except: pass
+
         if GPIO.input(UP_PIN) == GPIO.LOW:
             start = time.time()
             while GPIO.input(UP_PIN) == GPIO.LOW: time.sleep(0.05)
@@ -137,17 +122,15 @@ try:
             update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
 
         if GPIO.input(PRINT_PIN) == GPIO.LOW:
-            # Karte lokal suchen
-            path = os.path.join(PI_BASE_DIR, "data", CATEGORIES[current_cat_idx])
-            if CATEGORIES[current_cat_idx] != "lands":
-                path = os.path.join(path, str(current_cmc))
-            
+            cat = CATEGORIES[current_cat_idx]
+            path = os.path.join(PI_BASE_DIR, "data", cat)
+            if cat != "lands": path = os.path.join(path, str(current_cmc))
             if os.path.exists(path):
                 files = [f for f in os.listdir(path) if f.endswith('.json')]
                 if files:
                     with open(os.path.join(path, random.choice(files)), 'r') as f:
                         print_card(json.load(f))
             update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
-        time.sleep(0.1)
+        time.sleep(0.05)
 except KeyboardInterrupt:
     GPIO.cleanup()
