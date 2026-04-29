@@ -16,7 +16,8 @@ PI_BASE_DIR = os.path.expanduser("~/momirapp/www")
 AUTH_TOKEN = "zhmwsdl<3"
 
 UP_PIN, PRINT_PIN, DOWN_PIN = 11, 13, 15
-CATEGORIES = ["creatures", "lands", "planeswalkers", "battles"]
+# Sortiert: Erst creatures, dann der Rest alphabetisch
+CATEGORIES = ["creatures", "artifacts", "battles", "enchantments", "instants", "lands", "planeswalkers", "sorceries"]
 current_cat_idx = 0
 current_cmc = 1
 HOLD_THRESHOLD = 0.6 
