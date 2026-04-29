@@ -76,56 +76,56 @@ def perform_sync():
         time.sleep(2)
 
 # --- PRINTER SETUP ---
-def get_printer():
-    try:
-        # Wir versuchen es ohne das 'profile' Argument, falls das die Blockade verursacht
-        return Serial(devfile='/dev/serial0', baudrate=9600, timeout=1.0)
-    except:
-        return None
-
 def print_card(card_data):
-    p = get_printer()
-    if not p or not card_data: 
-        print("Drucker nicht bereit")
-        return
-    
+    p = None
     try:
+        # Initialisierung ohne Profil, um Inkompatibilitäten zu vermeiden
+        p = Serial(devfile='/dev/serial0', baudrate=9600, timeout=1.0)
+        if not p or not card_data: return
+        
         name = card_data.get('name', 'Unknown')
         update_ui("PRINTING...", name[:15])
         
-        # Reset & Initialisierung
+        # Drucker Reset
         p._raw(b'\x1b\x40') 
+        time.sleep(0.1)
         
-        # Header
+        # Name
         p.set(align='left', font='a', width=2, height=2)
         p.text(f"{name}\n")
         
-        # Image
+        # Bild-Druck mit Buffer-Pause
         img_rel = card_data['image'].lstrip('/')
         img_path = os.path.join(PI_BASE_DIR, img_rel)
         if os.path.exists(img_path):
             p.set(align='center')
+            # Wir drucken das Bild und warten kurz, damit der Drucker verarbeiten kann
             p.image(img_path)
+            time.sleep(0.5) 
             
-        # Details
-        p.set(align='left', font='a', bold=True)
+        # Kartentyp & Trennlinie
+        p.set(align='left', font='a', bold=True, width=1, height=1)
         p.text(f"\n{card_data.get('type_line', '')}\n")
         p.text("-" * 32 + "\n")
         
+        # Oracle Text
         p.set(align='left', font='a', bold=False) 
         p.text(f"{card_data.get('oracle_text', '')}\n")
         
+        # Stats (Power/Toughness/Loyalty)
         if card_data.get('stats'):
             p.set(align='right', font='a', bold=True)
-            p.text(f"[{card_data['stats']}]\n")
+            p.text(f"\n[{card_data['stats']}]\n")
             
+        # Vorschub am Ende
         p.text("\n\n\n\n")
-        # Kein flush(), kein close() notwendig bei Serial
+        
     except Exception as e:
         print(f"Print error: {e}")
-        update_ui("PRINT ERROR")
     finally:
-        # Sicherstellen, dass die UI zurückkehrt
+        if p:
+            # Serial Port sauber schließen
+            p.close()
         update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
 
 def get_local_random(category, cmc=None):
