@@ -1,0 +1,46 @@
+# Momir Pi Autostart Einrichtung (Systemd)
+
+Kopiere diese Anleitung in deine Dokumentation, um den automatischen Start auf dem Raspberry Pi einzurichten.
+
+## 1. Konfiguration
+
+* **User:** `momir`
+* **Pfad:** `/home/momir/momirapp`
+
+## 2. Einrichtung (Single Copy-Paste)
+
+Führe diese Befehle nacheinander aus. Der mittlere Block erstellt die komplette Service-Datei in einem Rutsch:
+
+```bash
+# 1. Datei mit Root-Rechten öffnen
+sudo nano /etc/systemd/system/momir-pi.service
+
+# 2. Kopiere den folgenden Block komplett in die Datei:
+[Unit]
+Description=Momir Command Center - Pi Print Client
+After=network.target
+
+[Service]
+User=momir
+WorkingDirectory=/home/momir/momirapp
+ExecStart=/usr/bin/python3 /home/momir/momirapp/momir_pi.py
+Restart=always
+RestartSec=5
+StandardOutput=inherit
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target
+
+# 3. Speichern: Strg+O, Enter | Schließen: Strg+X
+
+# 4. Service aktivieren und starten:
+sudo systemctl daemon-reload && \
+sudo systemctl enable momir-pi.service && \
+sudo systemctl start momir-pi.service
+
+Status: sudo systemctl status momir-pi.service
+
+Logs: journalctl -u momir-pi.service -f
+
+Restart: sudo systemctl restart momir-pi.service
