@@ -77,7 +77,8 @@ def perform_sync():
 
 # --- PRINTER SETUP ---
 try:
-    p = Serial(devfile='/dev/serial0', baudrate=9600, timeout=1.0)
+    # Hier wurde 'profile="pos58"' hinzugefügt, um die Breiten-Warnung zu fixen
+    p = Serial(devfile='/dev/serial0', baudrate=9600, timeout=1.0, profile="pos58")
 except:
     p = None
 
@@ -86,7 +87,8 @@ def print_card(card_data):
     try:
         name = card_data.get('name', 'Unknown')
         update_ui("PRINTING...", name[:15])
-        p._raw(b'\x1b\x40') 
+        p._raw(b'\x1b\x40') # Reset printer
+        
         p.set(align='left', font='a', width=2, height=2)
         p.text(f"{name}\n")
         
@@ -108,7 +110,7 @@ def print_card(card_data):
             p.text(f"[{card_data['stats']}]\n")
             
         p.text("\n\n\n\n")
-        p.flush()
+        # FIX: p.flush() wurde entfernt, da es diesen Befehl nicht gibt
     except Exception as e:
         print(f"Print error: {e}")
 
