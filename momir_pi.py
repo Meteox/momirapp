@@ -11,12 +11,10 @@ from luma.core.render import canvas
 
 # --- CONFIG ---
 SERVER_URL = "http://85.215.219.243:5000"
-# FIX: Hier wurde der Pfad auf momirapp angepasst!
 PI_BASE_DIR = os.path.expanduser("~/momirapp/www") 
 AUTH_TOKEN = "zhmwsdl<3"
 
 UP_PIN, PRINT_PIN, DOWN_PIN = 11, 13, 15
-# Sortiert: Erst creatures, dann der Rest alphabetisch
 CATEGORIES = ["creatures", "artifacts", "battles", "enchantments", "instants", "lands", "planeswalkers", "sorceries"]
 current_cat_idx = 0
 current_cmc = 1
@@ -27,19 +25,23 @@ try:
     serial_int = i2c(port=1, address=0x3C)
     device = ssd1306(serial_int, width=128, height=32)
     has_screen = True
-except:
+except Exception as e:
+    print(f"OLED Setup Error: {e}")
     has_screen = False
 
 def update_ui(line1, line2="", progress=None):
     if has_screen:
-        with canvas(device) as draw:
-            draw.rectangle(device.bounding_box, outline="white")
-            draw.text((5, 4), line1, fill="white")
-            if progress is not None:
-                bar_width = int((progress / 100) * 118)
-                draw.rectangle((5, 20, 5 + bar_width, 26), fill="white")
-            else:
-                draw.text((5, 18), line2, fill="white")
+        try:
+            with canvas(device) as draw:
+                draw.rectangle(device.bounding_box, outline="white")
+                draw.text((5, 4), line1, fill="white")
+                if progress is not None:
+                    bar_width = int((progress / 100) * 118)
+                    draw.rectangle((5, 20, 5 + bar_width, 26), fill="white")
+                else:
+                    draw.text((5, 18), line2, fill="white")
+        except:
+            pass
 
 # --- SYNC LOGIK ---
 def perform_sync():
@@ -52,12 +54,10 @@ def perform_sync():
             local_path = os.path.join(PI_BASE_DIR, rel_path)
             if not os.path.exists(local_path):
                 os.makedirs(os.path.dirname(local_path), exist_ok=True)
-                # JSON laden
                 data = requests.get(f"{SERVER_URL}/{rel_path}").json()
                 with open(local_path, 'w', encoding='utf-8') as f:
                     json.dump(data, f)
                 
-                # Bild laden - Fix für Pfad-Konstruktion
                 img_rel = data['image'].lstrip('/')
                 img_local = os.path.join(PI_BASE_DIR, img_rel)
                 if not os.path.exists(img_local):
@@ -76,32 +76,42 @@ def perform_sync():
         time.sleep(2)
 
 # --- PRINTER SETUP ---
-try:
-    # Hier wurde 'profile="pos58"' hinzugefügt, um die Breiten-Warnung zu fixen
-    p = Serial(devfile='/dev/serial0', baudrate=9600, timeout=1.0, profile="pos58")
-except:
-    p = None
+def get_printer():
+    try:
+        # Wir versuchen es ohne das 'profile' Argument, falls das die Blockade verursacht
+        return Serial(devfile='/dev/serial0', baudrate=9600, timeout=1.0)
+    except:
+        return None
 
 def print_card(card_data):
-    if not p or not card_data: return
+    p = get_printer()
+    if not p or not card_data: 
+        print("Drucker nicht bereit")
+        return
+    
     try:
         name = card_data.get('name', 'Unknown')
         update_ui("PRINTING...", name[:15])
-        p._raw(b'\x1b\x40') # Reset printer
         
+        # Reset & Initialisierung
+        p._raw(b'\x1b\x40') 
+        
+        # Header
         p.set(align='left', font='a', width=2, height=2)
         p.text(f"{name}\n")
         
+        # Image
         img_rel = card_data['image'].lstrip('/')
         img_path = os.path.join(PI_BASE_DIR, img_rel)
-        
         if os.path.exists(img_path):
             p.set(align='center')
             p.image(img_path)
             
+        # Details
         p.set(align='left', font='a', bold=True)
         p.text(f"\n{card_data.get('type_line', '')}\n")
         p.text("-" * 32 + "\n")
+        
         p.set(align='left', font='a', bold=False) 
         p.text(f"{card_data.get('oracle_text', '')}\n")
         
@@ -110,9 +120,13 @@ def print_card(card_data):
             p.text(f"[{card_data['stats']}]\n")
             
         p.text("\n\n\n\n")
-        # FIX: p.flush() wurde entfernt, da es diesen Befehl nicht gibt
+        # Kein flush(), kein close() notwendig bei Serial
     except Exception as e:
         print(f"Print error: {e}")
+        update_ui("PRINT ERROR")
+    finally:
+        # Sicherstellen, dass die UI zurückkehrt
+        update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
 
 def get_local_random(category, cmc=None):
     if category == "lands":
@@ -137,7 +151,7 @@ try:
     while True:
         # 1. POLL SERVER
         try:
-            r = requests.get(f"{SERVER_URL}/api/pi_poll", params={"token": AUTH_TOKEN}, timeout=0.1)
+            r = requests.get(f"{SERVER_URL}/api/pi_poll", params={"token": AUTH_TOKEN}, timeout=0.2)
             if r.status_code == 200:
                 cmd = r.json()
                 if cmd.get("type") == "sync": perform_sync()
@@ -168,8 +182,12 @@ try:
         if GPIO.input(PRINT_PIN) == GPIO.LOW:
             cat = CATEGORIES[current_cat_idx]
             card = get_local_random(cat, current_cmc if cat != "lands" else None)
-            if card: print_card(card)
-            update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
+            if card: 
+                print_card(card)
+            else:
+                update_ui("NO CARD FOUND")
+                time.sleep(1)
+                update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
 
         time.sleep(0.05)
 except KeyboardInterrupt:
