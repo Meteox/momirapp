@@ -5,7 +5,7 @@ A complete software suite for an automated **Magic: The Gathering Momir Basic** 
 ## 🚀 System Architecture
 
 ### 1. Flask Server (`momir_server.py`)
-The central hub running on a Windows/Strato server:
+The central hub running on a server:
 * Manages the card database and image assets.
 * Provides a REST API for the Raspberry Pi (`/api/pi_poll`, `/api/sync/manifest`).
 * Handles the print queue and web dashboard.
