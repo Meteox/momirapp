@@ -26,7 +26,6 @@ try:
     device = ssd1306(serial_int, width=128, height=32)
     has_screen = True
 except Exception as e:
-    print(f"OLED Setup Error: {e}")
     has_screen = False
 
 def update_ui(line1, line2="", progress=None):
@@ -40,72 +39,37 @@ def update_ui(line1, line2="", progress=None):
                     draw.rectangle((5, 20, 5 + bar_width, 26), fill="white")
                 else:
                     draw.text((5, 18), line2, fill="white")
-        except:
-            pass
+        except: pass
 
-# --- SYNC LOGIK ---
-def perform_sync():
-    update_ui("SYNCING...", "STARTING...")
-    try:
-        r = requests.get(f"{SERVER_URL}/api/sync/manifest", timeout=10)
-        remote_files = r.json()
-        total = len(remote_files)
-        for i, rel_path in enumerate(remote_files):
-            local_path = os.path.join(PI_BASE_DIR, rel_path)
-            if not os.path.exists(local_path):
-                os.makedirs(os.path.dirname(local_path), exist_ok=True)
-                data = requests.get(f"{SERVER_URL}/{rel_path}").json()
-                with open(local_path, 'w', encoding='utf-8') as f:
-                    json.dump(data, f)
-                
-                img_rel = data['image'].lstrip('/')
-                img_local = os.path.join(PI_BASE_DIR, img_rel)
-                if not os.path.exists(img_local):
-                    os.makedirs(os.path.dirname(img_local), exist_ok=True)
-                    img_r = requests.get(f"{SERVER_URL}/{img_rel}")
-                    with open(img_local, 'wb') as f:
-                        f.write(img_r.content)
-            
-            if i % 20 == 0:
-                update_ui("SYNCING...", f"{i}/{total}", progress=(i/total)*100)
-        
-        update_ui("SYNC COMPLETE", "READY")
-        time.sleep(2)
-    except Exception as e:
-        update_ui("SYNC ERROR", str(e)[:15])
-        time.sleep(2)
-
-# --- PRINTER SETUP ---
 def print_card(card_data):
     p = None
     try:
-        # Port öffnen
+        # Versuch mit Standard-Baudrate 9600
         p = Serial(devfile='/dev/serial0', baudrate=9600, timeout=1.0)
         if not p or not card_data: return
         
-        name = card_data.get('name', 'Unknown')
-        update_ui("PRINTING...", name[:15])
+        update_ui("DRUCKE...", card_data.get('name', '')[:12])
         
-        # Reset Drucker (ESC @) - löscht alten Gibberish aus dem Puffer
-        p._raw(b'\x1b\x40') 
+        # Nur absolute Standard-Befehle
+        p._raw(b'\x1b\x40') # Reset
         time.sleep(0.2)
         
-        # Text-Druck
+        # Name
         p.set(align='left', font='a', width=2, height=2)
-        p.text(f"{name}\n")
+        p.text(f"{card_data.get('name', 'Unknown')}\n")
         
-        # Bild-Druck
-        img_rel = card_data['image'].lstrip('/')
+        # Bild (Nur wenn Datei existiert)
+        img_rel = card_data.get('image', '').lstrip('/')
         img_path = os.path.join(PI_BASE_DIR, img_rel)
         if os.path.exists(img_path):
             p.set(align='center')
             p.image(img_path)
-            time.sleep(0.5) # Kurze Pause nach Bild
+            time.sleep(0.5)
             
+        # Text
         p.set(align='left', font='a', bold=True, width=1, height=1)
         p.text(f"\n{card_data.get('type_line', '')}\n")
         p.text("-" * 32 + "\n")
-        
         p.set(align='left', font='a', bold=False) 
         p.text(f"{card_data.get('oracle_text', '')}\n")
         
@@ -113,44 +77,47 @@ def print_card(card_data):
             p.set(align='right', font='a', bold=True)
             p.text(f"\n[{card_data['stats']}]\n")
             
-        p.text("\n\n\n\n")
+        p.text("\n\n\n") # Weniger Vorschub um Papier zu sparen
         
     except Exception as e:
-        print(f"Print error: {e}")
+        print(f"Fehler: {e}")
     finally:
-        if p:
-            p.close() # Port schließen, um ihn für andere frei zu machen
+        if p: p.close()
         update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
 
-def get_local_random(category, cmc=None):
-    if category == "lands":
-        path = os.path.join(PI_BASE_DIR, "data", category)
-    else:
-        path = os.path.join(PI_BASE_DIR, "data", category, str(cmc))
-    
-    if os.path.exists(path):
-        files = [f for f in os.listdir(path) if f.endswith('.json')]
-        if files:
-            with open(os.path.join(path, random.choice(files)), 'r', encoding='utf-8') as f:
-                return json.load(f)
-    return None
+def perform_sync():
+    update_ui("SYNC...", "START")
+    try:
+        r = requests.get(f"{SERVER_URL}/api/sync/manifest", timeout=10)
+        if r.status_code == 200:
+            for item in r.json():
+                local = os.path.join(PI_BASE_DIR, item.lstrip('/'))
+                if not os.path.exists(local):
+                    os.makedirs(os.path.dirname(local), exist_ok=True)
+                    res = requests.get(f"{SERVER_URL}/{item}")
+                    with open(local, 'wb') as f: f.write(res.content)
+        update_ui("SYNC OK")
+        time.sleep(1)
+    except: update_ui("SYNC ERROR")
 
-# --- GPIO SETUP ---
+def poll_server():
+    try:
+        r = requests.get(f"{SERVER_URL}/api/pi_poll", params={"token": AUTH_TOKEN}, timeout=0.2)
+        if r.status_code == 200:
+            cmd = r.json()
+            if cmd.get("type") == "sync": perform_sync()
+            elif cmd.get("type") == "print": print_card(cmd.get("data"))
+    except: pass
+
+# --- GPIO ---
 GPIO.setmode(GPIO.BOARD)
 GPIO.setup([UP_PIN, PRINT_PIN, DOWN_PIN], GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
-update_ui("MOMIR VIG 3.1", "READY")
+update_ui("MOMIR VIG", "BEREIT")
 
 try:
     while True:
-        try:
-            r = requests.get(f"{SERVER_URL}/api/pi_poll", params={"token": AUTH_TOKEN}, timeout=0.2)
-            if r.status_code == 200:
-                cmd = r.json()
-                if cmd.get("type") == "sync": perform_sync()
-                elif cmd.get("type") == "print": print_card(cmd.get("data"))
-        except: pass
-
+        poll_server()
         if GPIO.input(UP_PIN) == GPIO.LOW:
             start = time.time()
             while GPIO.input(UP_PIN) == GPIO.LOW: time.sleep(0.05)
@@ -170,11 +137,17 @@ try:
             update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
 
         if GPIO.input(PRINT_PIN) == GPIO.LOW:
-            cat = CATEGORIES[current_cat_idx]
-            card = get_local_random(cat, current_cmc if cat != "lands" else None)
-            if card: print_card(card)
+            # Karte lokal suchen
+            path = os.path.join(PI_BASE_DIR, "data", CATEGORIES[current_cat_idx])
+            if CATEGORIES[current_cat_idx] != "lands":
+                path = os.path.join(path, str(current_cmc))
+            
+            if os.path.exists(path):
+                files = [f for f in os.listdir(path) if f.endswith('.json')]
+                if files:
+                    with open(os.path.join(path, random.choice(files)), 'r') as f:
+                        print_card(json.load(f))
             update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
-
-        time.sleep(0.05)
+        time.sleep(0.1)
 except KeyboardInterrupt:
     GPIO.cleanup()
