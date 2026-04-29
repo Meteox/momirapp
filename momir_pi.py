@@ -11,14 +11,15 @@ from luma.core.render import canvas
 
 # --- CONFIG ---
 SERVER_URL = "http://85.215.219.243:5000"
-PI_BASE_DIR = os.path.expanduser("~/momir/www") # Automatisch richtiger User-Pfad
+# FIX: Hier wurde der Pfad auf momirapp angepasst!
+PI_BASE_DIR = os.path.expanduser("~/momirapp/www") 
 AUTH_TOKEN = "zhmwsdl<3"
 
 UP_PIN, PRINT_PIN, DOWN_PIN = 11, 13, 15
 CATEGORIES = ["creatures", "lands", "planeswalkers", "battles"]
 current_cat_idx = 0
 current_cmc = 1
-HOLD_THRESHOLD = 0.6 # Wie lange für Kategoriewechsel drücken (0.6s ist knackig)
+HOLD_THRESHOLD = 0.6 
 
 # 1. OLED Setup
 try:
@@ -50,9 +51,12 @@ def perform_sync():
             local_path = os.path.join(PI_BASE_DIR, rel_path)
             if not os.path.exists(local_path):
                 os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                # JSON laden
                 data = requests.get(f"{SERVER_URL}/{rel_path}").json()
                 with open(local_path, 'w', encoding='utf-8') as f:
                     json.dump(data, f)
+                
+                # Bild laden - Fix für Pfad-Konstruktion
                 img_rel = data['image'].lstrip('/')
                 img_local = os.path.join(PI_BASE_DIR, img_rel)
                 if not os.path.exists(img_local):
@@ -60,8 +64,10 @@ def perform_sync():
                     img_r = requests.get(f"{SERVER_URL}/{img_rel}")
                     with open(img_local, 'wb') as f:
                         f.write(img_r.content)
+            
             if i % 20 == 0:
                 update_ui("SYNCING...", f"{i}/{total}", progress=(i/total)*100)
+        
         update_ui("SYNC COMPLETE", "READY")
         time.sleep(2)
     except Exception as e:
@@ -82,19 +88,24 @@ def print_card(card_data):
         p._raw(b'\x1b\x40') 
         p.set(align='left', font='a', width=2, height=2)
         p.text(f"{name}\n")
+        
         img_rel = card_data['image'].lstrip('/')
         img_path = os.path.join(PI_BASE_DIR, img_rel)
+        
         if os.path.exists(img_path):
             p.set(align='center')
             p.image(img_path)
+            
         p.set(align='left', font='a', bold=True)
         p.text(f"\n{card_data.get('type_line', '')}\n")
         p.text("-" * 32 + "\n")
         p.set(align='left', font='a', bold=False) 
         p.text(f"{card_data.get('oracle_text', '')}\n")
+        
         if card_data.get('stats'):
             p.set(align='right', font='a', bold=True)
             p.text(f"[{card_data['stats']}]\n")
+            
         p.text("\n\n\n\n")
         p.flush()
     except Exception as e:
@@ -105,6 +116,7 @@ def get_local_random(category, cmc=None):
         path = os.path.join(PI_BASE_DIR, "data", category)
     else:
         path = os.path.join(PI_BASE_DIR, "data", category, str(cmc))
+    
     if os.path.exists(path):
         files = [f for f in os.listdir(path) if f.endswith('.json')]
         if files:
@@ -129,7 +141,7 @@ try:
                 elif cmd.get("type") == "print": print_card(cmd.get("data"))
         except: pass
 
-        # 2. UP BUTTON (Kurz: CMC+, Lang: Kategorie+)
+        # 2. UP BUTTON
         if GPIO.input(UP_PIN) == GPIO.LOW:
             start = time.time()
             while GPIO.input(UP_PIN) == GPIO.LOW: time.sleep(0.05)
@@ -139,7 +151,7 @@ try:
                 current_cmc = min(16, current_cmc + 1)
             update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
 
-        # 3. DOWN BUTTON (Kurz: CMC-, Lang: Kategorie-)
+        # 3. DOWN BUTTON
         if GPIO.input(DOWN_PIN) == GPIO.LOW:
             start = time.time()
             while GPIO.input(DOWN_PIN) == GPIO.LOW: time.sleep(0.05)
@@ -149,7 +161,7 @@ try:
                 current_cmc = max(1, current_cmc - 1)
             update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
 
-        # 4. PRINT (Sofort)
+        # 4. PRINT
         if GPIO.input(PRINT_PIN) == GPIO.LOW:
             cat = CATEGORIES[current_cat_idx]
             card = get_local_random(cat, current_cmc if cat != "lands" else None)
