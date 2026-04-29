@@ -8,8 +8,9 @@ from PIL import Image
 from io import BytesIO
 
 # --- KONFIGURATION ---
-BASE_PATH = r"C:\MomirServer\www\data"
-IMG_PATH = r"C:\MomirServer\www\images"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_PATH = os.path.join(BASE_DIR, "www", "data")
+IMG_PATH = os.path.join(BASE_DIR, "www", "images")
 BULK_DATA_URL = "https://api.scryfall.com/bulk-data"
 
 UN_SETS = ['ugl', 'unh', 'ust', 'unp', 'unf', 'und', 'unq', 'hho', 'cmb1', 'cmb2']
