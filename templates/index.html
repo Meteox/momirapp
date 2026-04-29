@@ -24,6 +24,8 @@
         .search-results { text-align: left; background: #222; border-radius: 8px; margin-top: 5px; max-height: 250px; overflow-y: auto; border: 1px solid #444; }
         .search-item { padding: 12px; border-bottom: 1px solid #333; cursor: pointer; }
         .search-item:hover { background: #00ffcc; color: black; }
+        .admin-card { border: 1px solid #ff00ff; margin-top: 40px; }
+        .btn-sync { background: #cf6679; color: white; }
     </style>
 </head>
 <body>
@@ -44,7 +46,8 @@
                 <option value="lands">Non-Basic Lands</option>
                 <option value="planeswalkers">Planeswalkers</option>
                 <option value="sorceries">Sorceries</option>
-                <option value="unset">Un-Sets</option> <option value="global_search">Globale Suche</option>
+                <option value="unset">Un-Sets</option>
+                <option value="global_search">Globale Suche</option>
                 <option value="tokens">Tokens (Suche)</option>
             </select>
             <div id="cmcSection">
@@ -66,6 +69,12 @@
                 <div id="prevOracle" class="oracle-box"></div>
                 <button id="printBtn" class="btn btn-print" onclick="sendToPrint()">🖨️ JETZT DRUCKEN</button>
             </div>
+        </div>
+        <div class="card admin-card">
+            <h3 style="color: #ff00ff;">Pi System-Steuerung</h3>
+            <input type="password" id="adminToken" placeholder="Admin Passwort">
+            <button class="btn btn-sync" onclick="triggerPiSync()">🔄 FULL SYNC AN PI SENDEN</button>
+            <div id="syncStatus" style="display: none; margin-top: 10px;"></div>
         </div>
     </div>
     <script>
@@ -103,28 +112,21 @@
             });
         }
         async function doSearch() {
-    const q = document.getElementById('searchInput').value;
-    const cat = document.getElementById('catSelect').value;
-    if(q.length < 3) {
-        document.getElementById('searchResults').innerHTML = '';
-        return;
-    }
-    
-    // FIX: Wir nutzen immer /api/search und hängen 'cat' als Filter an
-    const resp = await fetch(`/api/search?q=${encodeURIComponent(q)}&cat=${cat}`);
-    const results = await resp.json();
-    
-    const resDiv = document.getElementById('searchResults');
-    resDiv.innerHTML = '';
-    
-    results.forEach(t => {
-        const d = document.createElement('div');
-        d.className = 'search-item';
-        d.innerText = t.name + (t.stats ? ` [${t.stats}]` : '');
-        d.onclick = () => showPreview(t);
-        resDiv.appendChild(d);
-    });
-}
+            const q = document.getElementById('searchInput').value;
+            const cat = document.getElementById('catSelect').value;
+            if(q.length < 3) return;
+            const resp = await fetch(`/api/search?q=${encodeURIComponent(q)}&cat=${cat}`);
+            const results = await resp.json();
+            const resDiv = document.getElementById('searchResults');
+            resDiv.innerHTML = '';
+            results.forEach(t => {
+                const d = document.createElement('div');
+                d.className = 'search-item';
+                d.innerText = t.name + (t.stats ? ` [${t.stats}]` : '');
+                d.onclick = () => showPreview(t);
+                resDiv.appendChild(d);
+            });
+        }
         async function getRandomLand() {
             const resp = await fetch('/api/random_land');
             showPreview(await resp.json());
@@ -145,6 +147,21 @@
         async function sendToPrint() {
             if(!currentCard) return;
             await fetch('/api/enqueue', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(currentCard) });
+        }
+        async function triggerPiSync() {
+            const token = document.getElementById('adminToken').value;
+            const status = document.getElementById('syncStatus');
+            status.style.display = 'block';
+            status.innerText = "⏳ Befehl wird gesendet...";
+            try {
+                const resp = await fetch('/api/trigger_sync', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ token: token })
+                });
+                if(resp.ok) { status.innerText = "✅ SYNC GESTARTET!"; }
+                else { status.innerText = "❌ Fehler: Passwort falsch!"; }
+            } catch(e) { status.innerText = "❌ Netzwerkfehler!"; }
         }
         loadStats(); uiSwitch();
     </script>
