@@ -1,20 +1,25 @@
 import json
-import requests
+import random
 import time
 import os
+import requests
 import RPi.GPIO as GPIO
 from escpos.printer import Serial
 from luma.core.interface.serial import i2c
 from luma.oled.device import ssd1306
 from luma.core.render import canvas
-from PIL import Image
+from PIL import Image # Wichtig für die BMP-Simulation
 
 # --- CONFIG ---
+SERVER_URL = "http://85.215.219.243:5000"
+PI_BASE_DIR = os.path.expanduser("~/momirapp/www") 
+AUTH_TOKEN = "zhmwsdl<3"
+
 UP_PIN, PRINT_PIN, DOWN_PIN = 11, 13, 15
-# HIER DEINE WINDOWS-SERVER IP EINTRAGEN:
-SERVER_URL = "http://192.168.178.55:5000" 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TEMP_IMG = os.path.join(BASE_DIR, "temp_print.png")
+CATEGORIES = ["creatures", "artifacts", "battles", "enchantments", "instants", "lands", "planeswalkers", "sorceries"]
+current_cat_idx = 0
+current_cmc = 1
+HOLD_THRESHOLD = 0.6 
 
 # 1. OLED Setup
 try:
@@ -24,107 +29,108 @@ try:
 except:
     has_screen = False
 
-def update_ui(line1, line2="", progress=None):
+def update_ui(l1, l2=""):
     if has_screen:
-        with canvas(device) as draw:
-            draw.rectangle(device.bounding_box, outline="white")
-            draw.text((5, 4), line1, fill="white")
-            if progress is not None:
-                bar_width = int((progress / 100) * 118)
-                draw.rectangle((5, 20, 5 + bar_width, 26), fill="white")
-            else:
-                draw.text((5, 18), line2, fill="white")
+        try:
+            with canvas(device) as draw:
+                draw.rectangle(device.bounding_box, outline="white")
+                draw.text((5, 4), l1, fill="white")
+                draw.text((5, 18), l2, fill="white")
+        except: pass
 
-# 2. Printer Setup (Stabile 9600 Baudrate)[cite: 3]
+# 2. Printer Setup
 try:
     p = Serial(devfile='/dev/serial0', baudrate=9600, timeout=1.0)
 except:
     p = None
 
-current_cmc = 1
-
-def print_card(cmc):
-    update_ui("SUMMONING...", "WAITING FOR SERVER")
+def print_card(data):
+    if not p or not data: return
     try:
-        # 1. Daten vom Server holen
-        resp = requests.get(f"{SERVER_URL}/get_card/{cmc}", timeout=5)
-        if resp.status_code != 200: 
-            update_ui("SERVER ERROR", f"CODE: {resp.status_code}")
-            return
-        
-        card = resp.json()
-        name = card.get('name', 'Unknown')
+        name = data.get('name', 'Unknown')
         update_ui("SUMMONING...", name[:15])
-
-        # 2. Bild vom Server laden[cite: 4]
-        img_url = f"{SERVER_URL}{card.get('image')}"
-        img_resp = requests.get(img_url, timeout=5)
-        if img_resp.status_code == 200:
-            with open(TEMP_IMG, 'wb') as f:
-                f.write(img_resp.content)
-
-        if p:
-            # 3. Drucker Initialisierung (Verhindert Blödsinn-Druck)[cite: 3]
-            p._raw(b'\x1b\x40') 
-            time.sleep(0.1)
-            
-            # 4. Druck-Layout
-            # Name & Kosten
-            p.set(align='left', font='a', width=2, height=2)
-            p.text(f"{name}\n")
-            p.set(align='left', font='a', width=1, height=1, bold=True)
-            p.text(f"Cost: {card.get('mana_cost', '0')} (CMC: {cmc})\n")
-            
-            # Bild (Konvertierung übernimmt die Library)[cite: 4]
-            if os.path.exists(TEMP_IMG):
+        
+        # RESET
+        p._raw(b'\x1b\x40') 
+        time.sleep(0.1)
+        
+        # Name
+        p.set(align='left', font='a', width=2, height=2)
+        p.text(f"{name}\n")
+        
+        # BILD-LOGIK (Simuliert deine alten BMPs)
+        img_rel = data.get('image', '').lstrip('/')
+        img_path = os.path.join(PI_BASE_DIR, img_rel)
+        
+        if os.path.exists(img_path):
+            # Wir öffnen das PNG und konvertieren es in 1-Bit (Schwarz/Weiß)
+            # Das ist genau das, was deine alten BMPs waren.
+            with Image.open(img_path) as img:
+                img_bw = img.convert("1") # "1" steht für 1-Bit Pixel (Dithering)
+                time.sleep(0.2)
                 p.set(align='center')
-                p.image(TEMP_IMG)
-                time.sleep(0.3)
+                p.image(img_bw) # Der Drucker bekommt jetzt "fertige" Daten
+                time.sleep(0.5)
             
-            # Text & Stats
-            p.set(align='left', font='a', bold=True)
-            p.text(f"\n{card.get('type_line', '')}\n")
-            p.text("-" * 32 + "\n")
-            p.set(align='left', font='a', bold=False) 
-            p.text(f"{card.get('oracle_text', '')}\n")
+        # Details
+        p.set(align='left', font='a', bold=True)
+        p.text(f"\n{data.get('type_line', '')}\n")
+        p.text("-" * 32 + "\n")
+        p.set(align='left', font='a', bold=False) 
+        p.text(f"{data.get('oracle_text', '')}\n")
+        
+        if data.get('stats'):
+            p.set(align='right', font='a', bold=True)
+            p.text(f"[{data['stats']}]\n")
             
-            if card.get('stats'):
-                p.set(align='right', font='a', bold=True)
-                p.text(f"[{card['stats']}]\n")
-            
-            # Vorschub
-            p.text("\n\n\n\n")
-            p.flush()
-            
+        p.text("\n\n\n\n")
+        
     except Exception as e:
-        update_ui("ERROR", "CHECK LOGS")
-        print(f"Fehler beim Drucken: {e}")
+        print(f"Print error: {e}")
 
-# --- GPIO LOOP ---
+# --- RESTLICHER CODE (GPIO & LOOP) BLEIBT GLEICH ---
 GPIO.setmode(GPIO.BOARD)
 GPIO.setup([UP_PIN, PRINT_PIN, DOWN_PIN], GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
-update_ui("MOMIR VIG", f"CMC: {current_cmc}")
+update_ui("MOMIR READY", "V3.2")
 
 try:
     while True:
-        # UP Button
-        if GPIO.input(UP_PIN) == GPIO.LOW:
-            current_cmc = min(16, current_cmc + 1)
-            update_ui("SELECT CMC", f"CMC: {current_cmc}")
-            time.sleep(0.3)
-        
-        # DOWN Button
-        if GPIO.input(DOWN_PIN) == GPIO.LOW:
-            current_cmc = max(1, current_cmc - 1)
-            update_ui("SELECT CMC", f"CMC: {current_cmc}")
-            time.sleep(0.3)
+        try:
+            r = requests.get(f"{SERVER_URL}/api/pi_poll", params={"token": AUTH_TOKEN}, timeout=0.1)
+            if r.status_code == 200:
+                cmd = r.json()
+                if cmd.get("type") == "print": print_card(cmd.get("data"))
+        except: pass
 
-        # PRINT Button
+        if GPIO.input(UP_PIN) == GPIO.LOW:
+            start = time.time()
+            while GPIO.input(UP_PIN) == GPIO.LOW: time.sleep(0.05)
+            if (time.time() - start) > HOLD_THRESHOLD:
+                current_cat_idx = (current_cat_idx + 1) % len(CATEGORIES)
+            else:
+                current_cmc = min(16, current_cmc + 1)
+            update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
+
+        if GPIO.input(DOWN_PIN) == GPIO.LOW:
+            start = time.time()
+            while GPIO.input(DOWN_PIN) == GPIO.LOW: time.sleep(0.05)
+            if (time.time() - start) > HOLD_THRESHOLD:
+                current_cat_idx = (current_cat_idx - 1) % len(CATEGORIES)
+            else:
+                current_cmc = max(1, current_cmc - 1)
+            update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
+
         if GPIO.input(PRINT_PIN) == GPIO.LOW:
-            print_card(current_cmc)
-            update_ui("MOMIR VIG", f"CMC: {current_cmc}")
-            
+            cat = CATEGORIES[current_cat_idx]
+            path = os.path.join(PI_BASE_DIR, "data", cat)
+            if cat != "lands": path = os.path.join(path, str(current_cmc))
+            if os.path.exists(path):
+                files = [f for f in os.listdir(path) if f.endswith('.json')]
+                if files:
+                    with open(os.path.join(path, random.choice(files)), 'r') as f:
+                        print_card(json.load(f))
+            update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
         time.sleep(0.05)
 except KeyboardInterrupt:
     GPIO.cleanup()
