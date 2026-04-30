@@ -11,7 +11,8 @@ from PIL import Image
 
 # --- CONFIG ---
 UP_PIN, PRINT_PIN, DOWN_PIN = 11, 13, 15
-SERVER_URL = "http://192.168.178.55:5000" # DEINE SERVER-IP EINTRAGEN
+# HIER DEINE WINDOWS-SERVER IP EINTRAGEN:
+SERVER_URL = "http://192.168.178.55:5000" 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_IMG = os.path.join(BASE_DIR, "temp_print.png")
 
@@ -34,7 +35,7 @@ def update_ui(line1, line2="", progress=None):
             else:
                 draw.text((5, 18), line2, fill="white")
 
-# 2. Printer Setup (DEIN STABILER SETUP)
+# 2. Printer Setup (Stabile 9600 Baudrate)[cite: 3]
 try:
     p = Serial(devfile='/dev/serial0', baudrate=9600, timeout=1.0)
 except:
@@ -45,15 +46,17 @@ current_cmc = 1
 def print_card(cmc):
     update_ui("SUMMONING...", "WAITING FOR SERVER")
     try:
-        # Hole Karte vom Server
+        # 1. Daten vom Server holen
         resp = requests.get(f"{SERVER_URL}/get_card/{cmc}", timeout=5)
-        if resp.status_code != 200: return
-        card = resp.json()
+        if resp.status_code != 200: 
+            update_ui("SERVER ERROR", f"CODE: {resp.status_code}")
+            return
         
+        card = resp.json()
         name = card.get('name', 'Unknown')
         update_ui("SUMMONING...", name[:15])
 
-        # Bild herunterladen
+        # 2. Bild vom Server laden[cite: 4]
         img_url = f"{SERVER_URL}{card.get('image')}"
         img_resp = requests.get(img_url, timeout=5)
         if img_resp.status_code == 200:
@@ -61,23 +64,24 @@ def print_card(cmc):
                 f.write(img_resp.content)
 
         if p:
-            # DEIN STABILER RESET & PRINT FLOW
-            p._raw(b'\x1b\x40') # Reset
+            # 3. Drucker Initialisierung (Verhindert Blödsinn-Druck)[cite: 3]
+            p._raw(b'\x1b\x40') 
             time.sleep(0.1)
             
-            # Header
+            # 4. Druck-Layout
+            # Name & Kosten
             p.set(align='left', font='a', width=2, height=2)
             p.text(f"{name}\n")
             p.set(align='left', font='a', width=1, height=1, bold=True)
             p.text(f"Cost: {card.get('mana_cost', '0')} (CMC: {cmc})\n")
             
-            # Bild drucken
+            # Bild (Konvertierung übernimmt die Library)[cite: 4]
             if os.path.exists(TEMP_IMG):
                 p.set(align='center')
-                p.image(TEMP_IMG) # escpos kümmert sich um die Konvertierung
+                p.image(TEMP_IMG)
                 time.sleep(0.3)
             
-            # Rules & Stats
+            # Text & Stats
             p.set(align='left', font='a', bold=True)
             p.text(f"\n{card.get('type_line', '')}\n")
             p.text("-" * 32 + "\n")
@@ -88,14 +92,15 @@ def print_card(cmc):
                 p.set(align='right', font='a', bold=True)
                 p.text(f"[{card['stats']}]\n")
             
+            # Vorschub
             p.text("\n\n\n\n")
             p.flush()
             
     except Exception as e:
-        update_ui("ERROR", str(e)[:15])
-        print(f"Error: {e}")
+        update_ui("ERROR", "CHECK LOGS")
+        print(f"Fehler beim Drucken: {e}")
 
-# GPIO Setup & Loop wie gehabt...
+# --- GPIO LOOP ---
 GPIO.setmode(GPIO.BOARD)
 GPIO.setup([UP_PIN, PRINT_PIN, DOWN_PIN], GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
@@ -103,16 +108,19 @@ update_ui("MOMIR VIG", f"CMC: {current_cmc}")
 
 try:
     while True:
+        # UP Button
         if GPIO.input(UP_PIN) == GPIO.LOW:
             current_cmc = min(16, current_cmc + 1)
             update_ui("SELECT CMC", f"CMC: {current_cmc}")
             time.sleep(0.3)
         
+        # DOWN Button
         if GPIO.input(DOWN_PIN) == GPIO.LOW:
             current_cmc = max(1, current_cmc - 1)
             update_ui("SELECT CMC", f"CMC: {current_cmc}")
             time.sleep(0.3)
 
+        # PRINT Button
         if GPIO.input(PRINT_PIN) == GPIO.LOW:
             print_card(current_cmc)
             update_ui("MOMIR VIG", f"CMC: {current_cmc}")
