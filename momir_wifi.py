@@ -10,14 +10,19 @@ POLL_INTERVAL = 1.0  # Prüft jede Sekunde nach WLAN-Befehlen vom Server
 def scan_wifi():
     print("[WiFi] Starte aktiven Umgebungsscan...")
     try:
-        # Wir fordern nmcli mit --rescan yes auf, die Umgebung frisch zu scannen.
-        # Das ignoriert den alten Cache komplett.
+        # 1. Wir zwingen das Interface zu einem echten Rescan im Hintergrund
+        subprocess.run(['nmcli', 'device', 'wifi', 'rescan'], timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        # Dem Pi kurz Zeit geben, die neu gefundenen Netzwerke zu verarbeiten
+        time.sleep(2)
+
+        # 2. Wir holen alle aktuell sichtbaren SSIDs
         result = subprocess.check_output(
-            ['nmcli', '--rescan', 'yes', '-t', '-f', 'SSID', 'dev', 'wifi', 'list'],
+            ['nmcli', '-t', '-f', 'SSID', 'dev', 'wifi', 'list'],
             stderr=subprocess.STDOUT
         )
         
-        # Bereinigen: Keine Duplikate, keine leeren Namen
+        # 3. Bereinigen: Keine Duplikate, keine leeren Namen
         ssids = []
         for line in result.decode('utf-8').split('\n'):
             line = line.strip()
