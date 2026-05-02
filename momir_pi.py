@@ -21,12 +21,14 @@ if not os.path.exists(PI_BASE_DIR):
 TEMP_BMP_PATH = os.path.join(PI_BASE_DIR, "current_card.bmp")
 
 UP_PIN, PRINT_PIN, DOWN_PIN = 11, 13, 15
+
+# Hier sind die Kategorienamen exakt so hinterlegt, wie die Server-Ordner heißen
 CATEGORIES = ["creatures", "artifacts", "battles", "enchantments", "instants", "lands", "planeswalkers", "sorceries"]
 current_cat_idx = 0
 current_cmc = 1
 HOLD_THRESHOLD = 0.8 # Ab hier zählt es als langer Tastendruck (Toggle)
 
-# 1. OLED Setup (wie bisher)
+# 1. OLED Setup
 try:
     serial_int = i2c(port=1, address=0x3C)
     device = ssd1306(serial_int, width=128, height=32)
@@ -43,7 +45,7 @@ def update_ui(l1, l2=""):
                 draw.text((5, 18), l2, fill="white")
         except: pass
 
-# 2. Printer Setup (wie bisher)
+# 2. Printer Setup
 try:
     p = Serial(devfile='/dev/serial0', baudrate=9600, timeout=1.0)
 except:
@@ -53,12 +55,9 @@ except:
 def scan_wifi():
     update_ui("WIFI SCAN", "SEARCHING...")
     try:
-        # Führt Linux Terminal Befehl aus
         result = subprocess.check_output(['nmcli', '-t', '-f', 'SSID', 'dev', 'wifi'])
-        # Entfernt leere Zeilen und Duplikate
         ssids = list(set([line for line in result.decode('utf-8').split('\n') if line.strip()]))
         
-        # Schickt die Liste an den Server
         requests.post(f"{SERVER_URL}/api/wifi/set_results", json={"networks": ssids}, timeout=5)
         update_ui("WIFI SCAN", f"FOUND {len(ssids)}")
         time.sleep(2)
@@ -70,7 +69,6 @@ def scan_wifi():
 def connect_wifi(ssid, pw):
     update_ui("CONNECTING...", ssid[:15])
     try:
-        # Linux Befehl zum Verbinden
         subprocess.run(['nmcli', 'dev', 'wifi', 'connect', ssid, 'password', pw], timeout=15)
         update_ui("WIFI CONNECTED", ssid[:15])
         time.sleep(2)
@@ -82,7 +80,14 @@ def connect_wifi(ssid, pw):
 # --- BESTEHENDE DRUCK-LOGIK ---
 def download_and_save_bmp(img_url_path):
     try:
-        full_url = f"{SERVER_URL}/{img_url_path.lstrip('/')}"
+        # Falls der Pfad schon mit 'images/' oder '/' beginnt, bereinigen wir das hier
+        clean_path = img_url_path.lstrip('/')
+        if not clean_path.startswith('images/') and not clean_path.startswith('data/'):
+            # Manchmal liefert der Server nur den relativen Bildpfad
+            full_url = f"{SERVER_URL}/images/{clean_path}"
+        else:
+            full_url = f"{SERVER_URL}/{clean_path}"
+
         r = requests.get(full_url, timeout=5)
         if r.status_code == 200:
             with Image.open(BytesIO(r.content)) as img:
@@ -113,7 +118,7 @@ def print_card(data):
         mana = data.get('mana_cost', '')
         p.text(f"Cost: {mana} (CMC: {current_cmc})\n")
         
-        # Das Geniale: Wenn der Server das Bildfeld leert, springt er hier gar nicht rein!
+        # Bild laden, falls aktiviert
         img_url = data.get('image', '')
         if img_url and download_and_save_bmp(img_url):
             time.sleep(0.3)
@@ -152,7 +157,7 @@ try:
     while True:
         current_time = time.time()
 
-        # 1. WEB POLL (Mit zeitlicher Bremse, blockiert die Buttons nicht mehr)
+        # 1. WEB POLL (Zeitlich gebremst, damit Tasten nicht blockieren)
         if current_time - LAST_POLL_TIME > POLL_INTERVAL:
             LAST_POLL_TIME = current_time
             try:
@@ -190,7 +195,6 @@ try:
         # 3. PRINT BUTTON (Drucken ODER Toggle)
         if GPIO.input(PRINT_PIN) == GPIO.LOW:
             start = time.time()
-            # Warten bis losgelassen wird
             while GPIO.input(PRINT_PIN) == GPIO.LOW: 
                 time.sleep(0.05)
             
@@ -206,11 +210,13 @@ try:
                 time.sleep(1)
                 update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
             
-            # --- KURZ GEDRÜCKT -> DRUCKEN ---
+            # --- KURZ GEDRÜCKT -> LOKAL DRUCKEN ---
             else:
                 try:
                     cat = CATEGORIES[current_cat_idx]
-                    # Holt die Karte direkt über die Server-API
+                    update_ui("FETCHING...", cat[:12].upper())
+                    
+                    # Routing exakt wie in der Server-API definiert
                     if cat == "lands":
                         url = f"{SERVER_URL}/api/random_land"
                     else:
@@ -219,10 +225,15 @@ try:
                     r = requests.get(url, timeout=5)
                     if r.status_code == 200:
                         print_card(r.json())
+                    else:
+                        update_ui("SERVER ERROR", f"CODE: {r.status_code}")
+                        time.sleep(1.5)
                 except Exception as e:
                     print(f"Fehler beim Holen der Karte: {e}")
-                    update_ui("CONNECTION ERROR")
-                time.sleep(0.2)
+                    update_ui("CONN. ERROR", "CHECK SERVER")
+                    time.sleep(1.5)
+                    
+            update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
             
         time.sleep(0.05)
 except KeyboardInterrupt:
