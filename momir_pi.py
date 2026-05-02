@@ -3,6 +3,7 @@ import time
 import os
 import requests
 import subprocess
+import random
 import RPi.GPIO as GPIO
 from escpos.printer import Serial
 from luma.core.interface.serial import i2c
@@ -20,9 +21,11 @@ if not os.path.exists(PI_BASE_DIR):
     os.makedirs(PI_BASE_DIR)
 TEMP_BMP_PATH = os.path.join(PI_BASE_DIR, "current_card.bmp")
 
+# Pfad zur lokalen Datenbank auf der SD-Karte
+LOCAL_DATA_DIR = os.path.join(PI_BASE_DIR, "www", "data")
+
 UP_PIN, PRINT_PIN, DOWN_PIN = 11, 13, 15
 
-# Kategorien exakt wie auf deinem Server
 CATEGORIES = ["creatures", "artifacts", "battles", "enchantments", "instants", "lands", "planeswalkers", "sorceries"]
 current_cat_idx = 0
 current_cmc = 1
@@ -58,7 +61,7 @@ def scan_wifi():
         result = subprocess.check_output(['nmcli', '-t', '-f', 'SSID', 'dev', 'wifi'])
         ssids = list(set([line for line in result.decode('utf-8').split('\n') if line.strip()]))
         
-        requests.post(f"{SERVER_URL}/api/wifi/set_results", json={"networks": ssids}, timeout=3)
+        requests.post(f"{SERVER_URL}/api/wifi/set_results", json={"networks": ssids}, timeout=2)
         update_ui("WIFI SCAN", f"FOUND {len(ssids)}")
         time.sleep(1.5)
     except Exception as e:
@@ -86,7 +89,7 @@ def download_and_save_bmp(img_url_path):
         else:
             full_url = f"{SERVER_URL}/{clean_path}"
 
-        r = requests.get(full_url, timeout=3)
+        r = requests.get(full_url, timeout=2)
         if r.status_code == 200:
             with Image.open(BytesIO(r.content)) as img:
                 if img.width > 384:
@@ -153,17 +156,17 @@ GPIO.setup([UP_PIN, PRINT_PIN, DOWN_PIN], GPIO.IN, pull_up_down=GPIO.PUD_UP)
 update_ui("MOMIR READY", f"CMC: {current_cmc}")
 
 LAST_POLL_TIME = 0
-POLL_INTERVAL = 1.0  # Schnelleres Intervall (1 Sekunde)
+POLL_INTERVAL = 1.2
 
 try:
     while True:
         current_time = time.time()
 
-        # 1. WEB POLL (Mit striktem Timeout, blockiert die Buttons nicht mehr)
+        # 1. WEB POLL
         if current_time - LAST_POLL_TIME > POLL_INTERVAL:
             LAST_POLL_TIME = current_time
             try:
-                r = requests.get(f"{SERVER_URL}/api/pi_poll", params={"token": AUTH_TOKEN}, timeout=0.2)
+                r = requests.get(f"{SERVER_URL}/api/pi_poll", params={"token": AUTH_TOKEN}, timeout=0.1)
                 if r.status_code == 200:
                     cmd = r.json()
                     c_type = cmd.get("type")
@@ -173,8 +176,7 @@ try:
                         scan_wifi()
                     elif c_type == "connect":
                         connect_wifi(cmd.get("ssid"), cmd.get("pw"))
-            except requests.exceptions.RequestException:
-                # Netzwerk-Timeout oder Server nicht erreichbar -> Einfach ignorieren
+            except:
                 pass
 
         # 2. UP / DOWN Buttons
@@ -202,10 +204,10 @@ try:
             while GPIO.input(PRINT_PIN) == GPIO.LOW: 
                 time.sleep(0.05)
             
-            # Lange gedrückt: Bild Toggle
+            # Lange gedrückt: Bild-Toggle
             if (time.time() - start) > HOLD_THRESHOLD:
                 try:
-                    r = requests.post(f"{SERVER_URL}/api/toggle_image", timeout=1.5)
+                    r = requests.post(f"{SERVER_URL}/api/toggle_image", timeout=1)
                     if r.status_code == 200:
                         status = r.json().get("print_images")
                         update_ui("IMAGES:", "ON" if status else "OFF")
@@ -214,27 +216,48 @@ try:
                 time.sleep(1)
                 update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
             
-            # Kurz gedrückt: Druckauftrag anfordern
+            # Kurz gedrückt: Karte drucken (Erst Lokal, dann Server-Fallback)
             else:
-                try:
-                    cat = CATEGORIES[current_cat_idx]
-                    update_ui("FETCHING...", cat[:12].upper())
-                    
-                    if cat == "lands":
-                        url = f"{SERVER_URL}/api/random_land"
-                    else:
-                        url = f"{SERVER_URL}/api/random/{cat}/{current_cmc}"
-                        
-                    # Striktes Timeout von 2 Sekunden
-                    r = requests.get(url, timeout=2.0)
-                    if r.status_code == 200:
-                        print_card(r.json())
-                    else:
-                        update_ui("SERVER ERROR", f"CODE: {r.status_code}")
-                        time.sleep(1.5)
-                except Exception as e:
-                    print(f"Fehler beim Holen der Karte: {e}")
-                    update_ui("CONN. ERROR", "CHECK SERVER")
+                cat = CATEGORIES[current_cat_idx]
+                card_data = None
+                
+                # --- STRATEGIE 1: OFFLINE (Lokale SD-Karte) ---
+                # Pfad z.B.: ~/momirapp/www/data/creatures/1/
+                if cat == "lands":
+                    local_path = os.path.join(LOCAL_DATA_DIR, "lands")
+                else:
+                    local_path = os.path.join(LOCAL_DATA_DIR, cat, str(current_cmc))
+                
+                if os.path.exists(local_path):
+                    files = [f for f in os.listdir(local_path) if f.endswith('.json')]
+                    if files:
+                        try:
+                            # Zufällige lokale Karte einlesen
+                            with open(os.path.join(local_path, random.choice(files)), 'r', encoding='utf-8') as f:
+                                card_data = json.load(f)
+                        except Exception as e:
+                            print(f"Lokaler Lese-Fehler: {e}")
+
+                # --- STRATEGIE 2: ONLINE-FALLBACK (Nur wenn Offline fehlschlägt) ---
+                if not card_data:
+                    try:
+                        update_ui("FETCHING...", cat[:12].upper())
+                        if cat == "lands":
+                            url = f"{SERVER_URL}/api/random_land"
+                        else:
+                            url = f"{SERVER_URL}/api/random/{cat}/{current_cmc}"
+                            
+                        r = requests.get(url, timeout=2.0)
+                        if r.status_code == 200:
+                            card_data = r.json()
+                    except Exception as e:
+                        print(f"Server Fetch Fehler: {e}")
+
+                # --- STRATEGIE 3: DRUCKEN ---
+                if card_data:
+                    print_card(card_data)
+                else:
+                    update_ui("NO CARD FOUND", "OFF/ON EMPTY")
                     time.sleep(1.5)
                     
             update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
