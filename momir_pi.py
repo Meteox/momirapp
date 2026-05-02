@@ -2,7 +2,6 @@ import json
 import time
 import os
 import requests
-import subprocess
 import random
 import RPi.GPIO as GPIO
 from escpos.printer import Serial
@@ -56,49 +55,6 @@ try:
     p = Serial(devfile='/dev/serial0', baudrate=9600, timeout=1.0)
 except:
     p = None
-
-# --- WLAN FUNKTIONEN ---
-def scan_wifi():
-    update_ui("WIFI SCAN", "SCANNING...")
-    try:
-        # 1. Zwingt NetworkManager, die Umgebung aktiv neu zu scannen!
-        subprocess.run(['nmcli', 'dev', 'wifi', 'rescan'], timeout=5)
-        time.sleep(2)  # Dem Pi kurz Zeit geben, die neuen Netze zu verarbeiten
-        
-        # 2. Holt die Liste aller sichtbaren SSIDs
-        result = subprocess.check_output(['nmcli', '-t', '-f', 'SSID', 'dev', 'wifi'])
-        
-        # 3. Bereinigen: Keine leeren SSIDs, keine Duplikate
-        ssids = []
-        for line in result.decode('utf-8').split('\n'):
-            line = line.strip()
-            if line and line not in ssids:
-                ssids.append(line)
-        
-        # 4. Liste an den Server senden
-        requests.post(f"{SERVER_URL}/api/wifi/set_results", json={"networks": ssids}, timeout=2)
-        update_ui("WIFI SCAN", f"FOUND {len(ssids)}")
-        time.sleep(1.5)
-    except Exception as e:
-        print(f"WiFi Scan Error: {e}")
-        update_ui("WIFI SCAN", "FAILED")
-        time.sleep(1.5)
-
-def connect_wifi(ssid, pw):
-    update_ui("CONNECTING...", ssid[:15])
-    try:
-        # Verbindet sich mit dem neuen Netzwerk
-        if pw:
-            subprocess.run(['nmcli', 'dev', 'wifi', 'connect', ssid, 'password', pw], timeout=15)
-        else:
-            subprocess.run(['nmcli', 'dev', 'wifi', 'connect', ssid], timeout=15)
-            
-        update_ui("CONNECTED!", ssid[:15])
-        time.sleep(1.5)
-    except Exception as e:
-        print(f"WiFi Connect Error: {e}")
-        update_ui("WIFI FAILED", "CHECK PW")
-        time.sleep(1.5)
 
 # --- DRUCK-LOGIK ---
 def download_and_save_bmp(img_url_path):
@@ -192,10 +148,6 @@ try:
                     c_type = cmd.get("type")
                     if c_type == "print":
                         print_card(cmd.get("data"))
-                    elif c_type == "scan":
-                        scan_wifi()
-                    elif c_type == "connect":
-                        connect_wifi(cmd.get("ssid"), cmd.get("pw"))
             except:
                 pass
 
