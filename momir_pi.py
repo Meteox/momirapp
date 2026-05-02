@@ -31,6 +31,9 @@ current_cat_idx = 0
 current_cmc = 1
 HOLD_THRESHOLD = 0.8 
 
+# Der Pi merkt sich den Status jetzt lokal (100% offline-fähig)
+PRINT_IMAGES_LOCAL = True
+
 # 1. OLED Setup
 try:
     serial_int = i2c(port=1, address=0x3C)
@@ -204,25 +207,27 @@ try:
             while GPIO.input(PRINT_PIN) == GPIO.LOW: 
                 time.sleep(0.05)
             
-            # Lange gedrückt: Bild-Toggle
+            # --- LANGE GEDRÜCKT: Bild-Toggle (100% Offline) ---
             if (time.time() - start) > HOLD_THRESHOLD:
-                try:
-                    r = requests.post(f"{SERVER_URL}/api/toggle_image", timeout=1)
-                    if r.status_code == 200:
-                        status = r.json().get("print_images")
-                        update_ui("IMAGES:", "ON" if status else "OFF")
-                except:
-                    update_ui("TOGGLE", "FAILED")
+                # Lokal umschalten
+                PRINT_IMAGES_LOCAL = not PRINT_IMAGES_LOCAL
+                update_ui("IMAGES:", "ON" if PRINT_IMAGES_LOCAL else "OFF")
                 time.sleep(1)
+                
+                # Optional im Hintergrund synchronisieren, falls Server da ist
+                try:
+                    requests.post(f"{SERVER_URL}/api/toggle_image", timeout=0.3)
+                except:
+                    pass
+                    
                 update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
             
-            # Kurz gedrückt: Karte drucken (Erst Lokal, dann Server-Fallback)
+            # --- KURZ GEDRÜCKT: Karte drucken ---
             else:
                 cat = CATEGORIES[current_cat_idx]
                 card_data = None
                 
                 # --- STRATEGIE 1: OFFLINE (Lokale SD-Karte) ---
-                # Pfad z.B.: ~/momirapp/www/data/creatures/1/
                 if cat == "lands":
                     local_path = os.path.join(LOCAL_DATA_DIR, "lands")
                 else:
@@ -232,7 +237,6 @@ try:
                     files = [f for f in os.listdir(local_path) if f.endswith('.json')]
                     if files:
                         try:
-                            # Zufällige lokale Karte einlesen
                             with open(os.path.join(local_path, random.choice(files)), 'r', encoding='utf-8') as f:
                                 card_data = json.load(f)
                         except Exception as e:
@@ -255,6 +259,9 @@ try:
 
                 # --- STRATEGIE 3: DRUCKEN ---
                 if card_data:
+                    # Lokale Einstellung anwenden
+                    if not PRINT_IMAGES_LOCAL and 'image' in card_data:
+                        card_data['image'] = ''
                     print_card(card_data)
                 else:
                     update_ui("NO CARD FOUND", "OFF/ON EMPTY")
