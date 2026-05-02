@@ -49,7 +49,7 @@ try:
 except:
     p = None
 
-# --- NEU: WLAN FUNKTIONEN ---
+# --- WLAN FUNKTIONEN ---
 def scan_wifi():
     update_ui("WIFI SCAN", "SEARCHING...")
     try:
@@ -139,27 +139,34 @@ def print_card(data):
     finally:
         update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
 
-# --- GPIO LOOP ---
+# --- GPIO SETUP & MAIN LOOP ---
 GPIO.setmode(GPIO.BOARD)
 GPIO.setup([UP_PIN, PRINT_PIN, DOWN_PIN], GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
 update_ui("MOMIR READY", f"CMC: {current_cmc}")
 
+LAST_POLL_TIME = 0
+POLL_INTERVAL = 1.5  # Zeit in Sekunden zwischen den Abfragen
+
 try:
     while True:
-        # 1. WEB POLL (Prüft auf Druck- oder WLAN-Befehle)
-        try:
-            r = requests.get(f"{SERVER_URL}/api/pi_poll", params={"token": AUTH_TOKEN}, timeout=0.5)
-            if r.status_code == 200:
-                cmd = r.json()
-                c_type = cmd.get("type")
-                if c_type == "print":
-                    print_card(cmd.get("data"))
-                elif c_type == "scan":
-                    scan_wifi()
-                elif c_type == "connect":
-                    connect_wifi(cmd.get("ssid"), cmd.get("pw"))
-        except: pass
+        current_time = time.time()
+
+        # 1. WEB POLL (Mit zeitlicher Bremse, blockiert die Buttons nicht mehr)
+        if current_time - LAST_POLL_TIME > POLL_INTERVAL:
+            LAST_POLL_TIME = current_time
+            try:
+                r = requests.get(f"{SERVER_URL}/api/pi_poll", params={"token": AUTH_TOKEN}, timeout=0.1)
+                if r.status_code == 200:
+                    cmd = r.json()
+                    c_type = cmd.get("type")
+                    if c_type == "print":
+                        print_card(cmd.get("data"))
+                    elif c_type == "scan":
+                        scan_wifi()
+                    elif c_type == "connect":
+                        connect_wifi(cmd.get("ssid"), cmd.get("pw"))
+            except: pass
 
         # 2. UP / DOWN Buttons
         if GPIO.input(UP_PIN) == GPIO.LOW:
@@ -203,10 +210,17 @@ try:
             else:
                 try:
                     cat = CATEGORIES[current_cat_idx]
-                    r = requests.get(f"{SERVER_URL}/get_card/{current_cmc}?type={cat}", timeout=5)
+                    # Holt die Karte direkt über die Server-API
+                    if cat == "lands":
+                        url = f"{SERVER_URL}/api/random_land"
+                    else:
+                        url = f"{SERVER_URL}/api/random/{cat}/{current_cmc}"
+                        
+                    r = requests.get(url, timeout=5)
                     if r.status_code == 200:
                         print_card(r.json())
-                except:
+                except Exception as e:
+                    print(f"Fehler beim Holen der Karte: {e}")
                     update_ui("CONNECTION ERROR")
                 time.sleep(0.2)
             

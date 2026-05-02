@@ -21,14 +21,262 @@
         #prevImg { width: 100%; max-width: 350px; border-radius: 12px; margin: 15px 0; border: 1px solid #444; }
         .oracle-box { background: #2a2a2a; padding: 15px; border-radius: 8px; text-align: left; border-left: 4px solid #00ffcc; font-size: 0.9em; white-space: pre-wrap; }
         .stats-badge { background: #444; color: #00ffcc; padding: 5px 15px; border-radius: 20px; font-weight: bold; display: inline-block; margin-bottom: 10px; }
-        .search-results { text-align: left; max-height: 200px; overflow-y: auto; background: #222; border: 1px solid #444; border-radius: 6px; }
-        .search-item { padding: 10px; border-bottom: 1px solid #333; cursor: pointer; }
-        .search-item:hover { background: #333; }
-        
-        /* --- NEUE STYLES FÜR SETTINGS --- */
-        .settings-box { background: #1a1a1a; border: 1px solid #444; border-radius: 12px; padding: 15px; margin-top: 30px; text-align: left;}
-        .settings-box h4 { color: #aaa; border-bottom: 1px solid #333; padding-bottom: 5px; margin-top: 0; }
+        .search-results { text-align: left; background: #222; border-radius: 8px; margin-top: 5px; max-height: 250px; overflow-y: auto; border: 1px solid #444; }
+        .search-item { padding: 12px; border-bottom: 1px solid #333; cursor: pointer; }
+        .search-item:hover { background: #00ffcc; color: black; }
+        .admin-card { border: 1px solid #ff00ff; margin-top: 40px; }
+        .btn-sync { background: #cf6679; color: white; }
+
+        /* Neue Styles für die Zusatzfeatures */
+        .settings-divider { border-top: 1px solid #333; margin: 20px 0 15px 0; padding-top: 15px; }
         .toggle-btn { background: #4CAF50; }
         .toggle-btn.off { background: #f44336; }
-        .wifi-list { list-style: none; padding: 0; margin: 10px 0; }
-        .wifi-item { background: #252525; margin-bottom: 5px; padding: 1
+        .wifi-list { list-style: none; padding: 0; margin: 10px 0; text-align: left; }
+        .wifi-item { background: #252525; margin-bottom: 5px; padding: 10px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; border-left: 3px solid #00ffcc;}
+        .wifi-connect-btn { background: #008CBA; padding: 6px 12px; font-size: 0.9em; width: auto; margin: 0;}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Momir Command Center</h1>
+        <div class="card">
+            <h3>Datenbank Status</h3>
+            <div id="statsDisplay" class="stats-grid">Lade Statistiken...</div>
+        </div>
+        <div class="card">
+            <h3>Modus & Auswahl</h3>
+            <select id="catSelect" onchange="uiSwitch()">
+                <option value="creatures">Creatures</option>
+                <option value="artifacts">Artifacts</option>
+                <option value="battles">Battles</option>
+                <option value="enchantments">Enchantments</option>
+                <option value="instants">Instants</option>
+                <option value="lands">Non-Basic Lands</option>
+                <option value="planeswalkers">Planeswalkers</option>
+                <option value="sorceries">Sorceries</option>
+                <option value="unset">Un-Sets</option>
+                <option value="global_search">Globale Suche</option>
+                <option value="tokens">Tokens (Suche)</option>
+            </select>
+            <div id="cmcSection">
+                <p>CMC wählen:</p>
+                <div id="cmcButtonContainer"></div>
+            </div>
+            <div id="landSection" style="display: none;">
+                <button class="btn" style="background:#00ffcc; color:black;" onclick="getRandomLand()">🎲 LAND WÜRFELN</button>
+            </div>
+            <div id="searchSection" style="display: none;">
+                <input type="text" id="searchInput" placeholder="Kartenname tippen..." oninput="doSearch()">
+                <div id="searchResults" class="search-results"></div>
+            </div>
+            <div id="previewArea">
+                <h2 id="prevName" style="color: #00ffcc; margin: 0; text-align: left;"></h2>
+                <div id="prevType" style="color: #888; font-size: 0.8em; text-align: left; margin-bottom: 10px;"></div>
+                <img id="prevImg" src="" alt="Vorschau">
+                <div id="prevStats" class="stats-badge"></div>
+                <div id="prevOracle" class="oracle-box"></div>
+                <button id="printBtn" class="btn btn-print" onclick="sendToPrint()">🖨️ JETZT DRUCKEN</button>
+            </div>
+        </div>
+
+        <div class="card admin-card">
+            <h3 style="color: #ff00ff;">Pi System-Steuerung</h3>
+            <input type="password" id="adminToken" placeholder="Admin Passwort">
+            <button class="btn btn-sync" onclick="triggerPiSync()">🔄 FULL SYNC AN PI SENDEN</button>
+            <div id="syncStatus" style="display: none; margin-top: 10px;"></div>
+
+            <div class="settings-divider"></div>
+            <h3 style="color: #00ffcc;">Hardware & Netzwerk</h3>
+            
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <span>Grafiken drucken:</span>
+                <button id="imgToggleBtn" class="btn toggle-btn" style="width: auto; padding: 8px 15px; margin: 0;" onclick="toggleImages()">LÄDT...</button>
+            </div>
+
+            <div style="text-align: left;">
+                <span style="color: #aaa;">WLAN Scanner (Hotspot-Modus):</span>
+                <button class="btn" style="background: #444; margin-top: 5px;" onclick="triggerWifiScan()">📡 Netze suchen</button>
+                <div id="scanStatus" style="color: #00ffcc; font-size: 0.9em; margin-top: 5px;"></div>
+                <ul id="wifiList" class="wifi-list"></ul>
+            </div>
+            </div>
+    </div>
+    <script>
+        let currentCard = null;
+
+        async function loadStats() {
+            try {
+                const resp = await fetch('/api/stats');
+                const data = await resp.json();
+                const display = document.getElementById('statsDisplay');
+                display.innerHTML = '';
+                Object.keys(data).sort().forEach(cat => {
+                    display.innerHTML += `<div class="stat-item"><div class="stat-count">${data[cat]}</div><div style="font-size: 0.7em;">${cat.toUpperCase()}</div></div>`;
+                });
+            } catch(e) {}
+        }
+
+        function uiSwitch() {
+            const cat = document.getElementById('catSelect').value;
+            const hideCMC = ['tokens', 'lands', 'global_search'].includes(cat);
+            document.getElementById('cmcSection').style.display = hideCMC ? 'none' : 'block';
+            document.getElementById('landSection').style.display = (cat === 'lands') ? 'block' : 'none';
+            document.getElementById('searchSection').style.display = (cat === 'tokens' || cat === 'global_search') ? 'block' : 'none';
+            if(!hideCMC) updateCMCButtons();
+        }
+
+        async function updateCMCButtons() {
+            const cat = document.getElementById('catSelect').value;
+            const container = document.getElementById('cmcButtonContainer');
+            const resp = await fetch(`/api/cmcs/${cat}`);
+            const cmcs = await resp.json();
+            container.innerHTML = '';
+            cmcs.forEach(cmc => {
+                const btn = document.createElement('button');
+                btn.className = 'btn btn-cmc'; btn.innerText = cmc;
+                btn.onclick = () => getPreview(cat, cmc);
+                container.appendChild(btn);
+            });
+        }
+
+        async function doSearch() {
+            const q = document.getElementById('searchInput').value;
+            const cat = document.getElementById('catSelect').value;
+            if(q.length < 3) return;
+            const resp = await fetch(`/api/search?q=${encodeURIComponent(q)}&cat=${cat}`);
+            const results = await resp.json();
+            const resDiv = document.getElementById('searchResults');
+            resDiv.innerHTML = '';
+            results.forEach(t => {
+                const d = document.createElement('div');
+                d.className = 'search-item';
+                d.innerText = t.name + (t.stats ? ` [${t.stats}]` : '');
+                d.onclick = () => showPreview(t);
+                resDiv.appendChild(d);
+            });
+        }
+
+        async function getRandomLand() {
+            const resp = await fetch('/api/random_land');
+            showPreview(await resp.json());
+        }
+
+        async function getPreview(cat, cmc) {
+            const resp = await fetch(`/api/random/${cat}/${cmc}`);
+            showPreview(await resp.json());
+        }
+
+        function showPreview(data) {
+            currentCard = data;
+            document.getElementById('prevName').innerText = data.name;
+            document.getElementById('prevType').innerText = data.type_line;
+            document.getElementById('prevImg').src = data.image;
+            document.getElementById('prevOracle').innerText = data.oracle_text || "";
+            document.getElementById('prevStats').innerText = data.stats || "";
+            document.getElementById('previewArea').style.display = 'block';
+        }
+
+        async function sendToPrint() {
+            if(!currentCard) return;
+            await fetch('/api/enqueue', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(currentCard) });
+        }
+
+        async function triggerPiSync() {
+            const token = document.getElementById('adminToken').value;
+            const status = document.getElementById('syncStatus');
+            status.style.display = 'block';
+            status.innerText = "⏳ Befehl wird gesendet...";
+            try {
+                const resp = await fetch('/api/trigger_sync', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ token: token })
+                });
+                if(resp.ok) { status.innerText = "✅ SYNC GESTARTET!"; }
+                else { status.innerText = "❌ Fehler: Passwort falsch!"; }
+            } catch(e) { status.innerText = "❌ Netzwerkfehler!"; }
+        }
+
+        // === NEUE FUNKTIONEN FÜR SETTINGS & WLAN ===
+
+        async function loadSettings() {
+            try {
+                const resp = await fetch('/api/settings');
+                const data = await resp.json();
+                updateToggleBtn(data.print_images);
+            } catch(e) {}
+        }
+
+        function updateToggleBtn(isOn) {
+            const btn = document.getElementById('imgToggleBtn');
+            if(isOn) {
+                btn.innerText = "AN";
+                btn.classList.remove('off');
+            } else {
+                btn.innerText = "AUS";
+                btn.classList.add('off');
+            }
+        }
+
+        async function toggleImages() {
+            try {
+                const resp = await fetch('/api/toggle_image', { method: 'POST' });
+                const data = await resp.json();
+                updateToggleBtn(data.print_images);
+            } catch(e) {}
+        }
+
+        function triggerWifiScan() {
+            document.getElementById('scanStatus').innerText = "⏳ Pi scannt... (ca. 10 Sek)";
+            document.getElementById('wifiList').innerHTML = "";
+            
+            fetch('/api/wifi/trigger_scan', { method: 'POST' })
+                .then(() => {
+                    setTimeout(pollWifiResults, 3000); 
+                });
+        }
+
+        function pollWifiResults() {
+            fetch('/api/wifi/get_results')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.networks && data.networks.length > 0) {
+                        document.getElementById('scanStatus').innerText = "✅ Gefunden:";
+                        renderWifiList(data.networks);
+                    } else {
+                        setTimeout(pollWifiResults, 2000);
+                    }
+                });
+        }
+
+        function renderWifiList(networks) {
+            let html = "";
+            networks.forEach(ssid => {
+                html += `<li class="wifi-item">
+                            <b style="word-break: break-all; margin-right: 10px;">${ssid}</b> 
+                            <button class="btn wifi-connect-btn" onclick="connectWifi('${ssid}')">Verbinden</button>
+                         </li>`;
+            });
+            document.getElementById('wifiList').innerHTML = html;
+        }
+
+        function connectWifi(ssid) {
+            const pw = prompt(`Passwort für WLAN '${ssid}' eingeben:\n(Wenn kein PW, das Feld einfach leer lassen)`);
+            if (pw !== null) {
+                fetch('/api/wifi/connect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ssid: ssid, password: pw })
+                }).then(() => {
+                    alert(`Pi versucht sich mit '${ssid}' zu verbinden!`);
+                });
+            }
+        }
+
+        // Init beim Laden
+        loadStats(); 
+        uiSwitch();
+        loadSettings();
+    </script>
+</body>
+</html>
