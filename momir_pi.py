@@ -22,11 +22,11 @@ TEMP_BMP_PATH = os.path.join(PI_BASE_DIR, "current_card.bmp")
 
 UP_PIN, PRINT_PIN, DOWN_PIN = 11, 13, 15
 
-# Hier sind die Kategorienamen exakt so hinterlegt, wie die Server-Ordner heißen
+# Kategorien exakt wie auf deinem Server
 CATEGORIES = ["creatures", "artifacts", "battles", "enchantments", "instants", "lands", "planeswalkers", "sorceries"]
 current_cat_idx = 0
 current_cmc = 1
-HOLD_THRESHOLD = 0.8 # Ab hier zählt es als langer Tastendruck (Toggle)
+HOLD_THRESHOLD = 0.8 
 
 # 1. OLED Setup
 try:
@@ -58,37 +58,35 @@ def scan_wifi():
         result = subprocess.check_output(['nmcli', '-t', '-f', 'SSID', 'dev', 'wifi'])
         ssids = list(set([line for line in result.decode('utf-8').split('\n') if line.strip()]))
         
-        requests.post(f"{SERVER_URL}/api/wifi/set_results", json={"networks": ssids}, timeout=5)
+        requests.post(f"{SERVER_URL}/api/wifi/set_results", json={"networks": ssids}, timeout=3)
         update_ui("WIFI SCAN", f"FOUND {len(ssids)}")
-        time.sleep(2)
+        time.sleep(1.5)
     except Exception as e:
         print(f"WiFi Scan Error: {e}")
-        update_ui("WIFI SCAN", "FAILED (No nmcli?)")
-        time.sleep(2)
+        update_ui("WIFI SCAN", "FAILED")
+        time.sleep(1.5)
 
 def connect_wifi(ssid, pw):
     update_ui("CONNECTING...", ssid[:15])
     try:
-        subprocess.run(['nmcli', 'dev', 'wifi', 'connect', ssid, 'password', pw], timeout=15)
-        update_ui("WIFI CONNECTED", ssid[:15])
-        time.sleep(2)
+        subprocess.run(['nmcli', 'dev', 'wifi', 'connect', ssid, 'password', pw], timeout=12)
+        update_ui("CONNECTED!", ssid[:15])
+        time.sleep(1.5)
     except Exception as e:
         print(f"WiFi Connect Error: {e}")
         update_ui("WIFI FAILED", "CHECK PW")
-        time.sleep(2)
+        time.sleep(1.5)
 
-# --- BESTEHENDE DRUCK-LOGIK ---
+# --- DRUCK-LOGIK ---
 def download_and_save_bmp(img_url_path):
     try:
-        # Falls der Pfad schon mit 'images/' oder '/' beginnt, bereinigen wir das hier
         clean_path = img_url_path.lstrip('/')
         if not clean_path.startswith('images/') and not clean_path.startswith('data/'):
-            # Manchmal liefert der Server nur den relativen Bildpfad
             full_url = f"{SERVER_URL}/images/{clean_path}"
         else:
             full_url = f"{SERVER_URL}/{clean_path}"
 
-        r = requests.get(full_url, timeout=5)
+        r = requests.get(full_url, timeout=3)
         if r.status_code == 200:
             with Image.open(BytesIO(r.content)) as img:
                 if img.width > 384:
@@ -99,33 +97,37 @@ def download_and_save_bmp(img_url_path):
                 img_bw.save(TEMP_BMP_PATH, "BMP")
                 return True
     except Exception as e:
-        print(f"Fehler Bild: {e}")
+        print(f"Fehler Bild-Download: {e}")
     return False
 
 def print_card(data):
     if not p or not data: return
     try:
         name = data.get('name', 'Unknown')
-        update_ui("SUMMONING...", name[:15])
+        update_ui("PRINTING...", name[:15])
         
+        # Drucker initialisieren
         p._raw(b'\x1b\x40') 
         time.sleep(0.1)
         
+        # Titel
         p.set(align='left', font='a', width=2, height=2)
         p.text(f"{name}\n")
         
+        # Kosten
         p.set(align='left', font='a', width=1, height=1, bold=True)
         mana = data.get('mana_cost', '')
         p.text(f"Cost: {mana} (CMC: {current_cmc})\n")
         
-        # Bild laden, falls aktiviert
+        # Grafik
         img_url = data.get('image', '')
         if img_url and download_and_save_bmp(img_url):
-            time.sleep(0.3)
+            time.sleep(0.2)
             p.set(align='center')
             p.image(TEMP_BMP_PATH) 
-            time.sleep(0.3)
+            time.sleep(0.2)
             
+        # Regeln & Typen
         p.set(align='left', font='a', bold=True)
         p.text(f"\n{data.get('type_line', '')}\n")
         p.text("-" * 32 + "\n")
@@ -151,17 +153,17 @@ GPIO.setup([UP_PIN, PRINT_PIN, DOWN_PIN], GPIO.IN, pull_up_down=GPIO.PUD_UP)
 update_ui("MOMIR READY", f"CMC: {current_cmc}")
 
 LAST_POLL_TIME = 0
-POLL_INTERVAL = 1.5  # Zeit in Sekunden zwischen den Abfragen
+POLL_INTERVAL = 1.0  # Schnelleres Intervall (1 Sekunde)
 
 try:
     while True:
         current_time = time.time()
 
-        # 1. WEB POLL (Zeitlich gebremst, damit Tasten nicht blockieren)
+        # 1. WEB POLL (Mit striktem Timeout, blockiert die Buttons nicht mehr)
         if current_time - LAST_POLL_TIME > POLL_INTERVAL:
             LAST_POLL_TIME = current_time
             try:
-                r = requests.get(f"{SERVER_URL}/api/pi_poll", params={"token": AUTH_TOKEN}, timeout=0.1)
+                r = requests.get(f"{SERVER_URL}/api/pi_poll", params={"token": AUTH_TOKEN}, timeout=0.2)
                 if r.status_code == 200:
                     cmd = r.json()
                     c_type = cmd.get("type")
@@ -171,7 +173,9 @@ try:
                         scan_wifi()
                     elif c_type == "connect":
                         connect_wifi(cmd.get("ssid"), cmd.get("pw"))
-            except: pass
+            except requests.exceptions.RequestException:
+                # Netzwerk-Timeout oder Server nicht erreichbar -> Einfach ignorieren
+                pass
 
         # 2. UP / DOWN Buttons
         if GPIO.input(UP_PIN) == GPIO.LOW:
@@ -192,16 +196,16 @@ try:
                 current_cmc = max(1, current_cmc - 1)
             update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
 
-        # 3. PRINT BUTTON (Drucken ODER Toggle)
+        # 3. PRINT BUTTON
         if GPIO.input(PRINT_PIN) == GPIO.LOW:
             start = time.time()
             while GPIO.input(PRINT_PIN) == GPIO.LOW: 
                 time.sleep(0.05)
             
-            # --- FEATURE 1: LANGE GEDRÜCKT -> BILD TOGGLE ---
+            # Lange gedrückt: Bild Toggle
             if (time.time() - start) > HOLD_THRESHOLD:
                 try:
-                    r = requests.post(f"{SERVER_URL}/api/toggle_image", timeout=2)
+                    r = requests.post(f"{SERVER_URL}/api/toggle_image", timeout=1.5)
                     if r.status_code == 200:
                         status = r.json().get("print_images")
                         update_ui("IMAGES:", "ON" if status else "OFF")
@@ -210,19 +214,19 @@ try:
                 time.sleep(1)
                 update_ui(CATEGORIES[current_cat_idx].upper(), f"CMC: {current_cmc}")
             
-            # --- KURZ GEDRÜCKT -> LOKAL DRUCKEN ---
+            # Kurz gedrückt: Druckauftrag anfordern
             else:
                 try:
                     cat = CATEGORIES[current_cat_idx]
                     update_ui("FETCHING...", cat[:12].upper())
                     
-                    # Routing exakt wie in der Server-API definiert
                     if cat == "lands":
                         url = f"{SERVER_URL}/api/random_land"
                     else:
                         url = f"{SERVER_URL}/api/random/{cat}/{current_cmc}"
                         
-                    r = requests.get(url, timeout=5)
+                    # Striktes Timeout von 2 Sekunden
+                    r = requests.get(url, timeout=2.0)
                     if r.status_code == 200:
                         print_card(r.json())
                     else:
