@@ -31,7 +31,7 @@ current_cat_idx = 0
 current_cmc = 1
 HOLD_THRESHOLD = 0.8 
 
-# Der Pi merkt sich den Status jetzt lokal (100% offline-fähig)
+# Der Pi merkt sich den Status lokal (100% Offline-fähig)
 PRINT_IMAGES_LOCAL = True
 
 # 1. OLED Setup
@@ -59,11 +59,23 @@ except:
 
 # --- WLAN FUNKTIONEN ---
 def scan_wifi():
-    update_ui("WIFI SCAN", "SEARCHING...")
+    update_ui("WIFI SCAN", "SCANNING...")
     try:
-        result = subprocess.check_output(['nmcli', '-t', '-f', 'SSID', 'dev', 'wifi'])
-        ssids = list(set([line for line in result.decode('utf-8').split('\n') if line.strip()]))
+        # 1. Zwingt NetworkManager, die Umgebung aktiv neu zu scannen!
+        subprocess.run(['nmcli', 'dev', 'wifi', 'rescan'], timeout=5)
+        time.sleep(2)  # Dem Pi kurz Zeit geben, die neuen Netze zu verarbeiten
         
+        # 2. Holt die Liste aller sichtbaren SSIDs
+        result = subprocess.check_output(['nmcli', '-t', '-f', 'SSID', 'dev', 'wifi'])
+        
+        # 3. Bereinigen: Keine leeren SSIDs, keine Duplikate
+        ssids = []
+        for line in result.decode('utf-8').split('\n'):
+            line = line.strip()
+            if line and line not in ssids:
+                ssids.append(line)
+        
+        # 4. Liste an den Server senden
         requests.post(f"{SERVER_URL}/api/wifi/set_results", json={"networks": ssids}, timeout=2)
         update_ui("WIFI SCAN", f"FOUND {len(ssids)}")
         time.sleep(1.5)
@@ -75,7 +87,12 @@ def scan_wifi():
 def connect_wifi(ssid, pw):
     update_ui("CONNECTING...", ssid[:15])
     try:
-        subprocess.run(['nmcli', 'dev', 'wifi', 'connect', ssid, 'password', pw], timeout=12)
+        # Verbindet sich mit dem neuen Netzwerk
+        if pw:
+            subprocess.run(['nmcli', 'dev', 'wifi', 'connect', ssid, 'password', pw], timeout=15)
+        else:
+            subprocess.run(['nmcli', 'dev', 'wifi', 'connect', ssid], timeout=15)
+            
         update_ui("CONNECTED!", ssid[:15])
         time.sleep(1.5)
     except Exception as e:
@@ -209,12 +226,10 @@ try:
             
             # --- LANGE GEDRÜCKT: Bild-Toggle (100% Offline) ---
             if (time.time() - start) > HOLD_THRESHOLD:
-                # Lokal umschalten
                 PRINT_IMAGES_LOCAL = not PRINT_IMAGES_LOCAL
                 update_ui("IMAGES:", "ON" if PRINT_IMAGES_LOCAL else "OFF")
                 time.sleep(1)
                 
-                # Optional im Hintergrund synchronisieren, falls Server da ist
                 try:
                     requests.post(f"{SERVER_URL}/api/toggle_image", timeout=0.3)
                 except:
@@ -227,7 +242,7 @@ try:
                 cat = CATEGORIES[current_cat_idx]
                 card_data = None
                 
-                # --- STRATEGIE 1: OFFLINE (Lokale SD-Karte) ---
+                # STRATEGIE 1: OFFLINE (Lokale SD-Karte)
                 if cat == "lands":
                     local_path = os.path.join(LOCAL_DATA_DIR, "lands")
                 else:
@@ -242,7 +257,7 @@ try:
                         except Exception as e:
                             print(f"Lokaler Lese-Fehler: {e}")
 
-                # --- STRATEGIE 2: ONLINE-FALLBACK (Nur wenn Offline fehlschlägt) ---
+                # STRATEGIE 2: ONLINE-FALLBACK
                 if not card_data:
                     try:
                         update_ui("FETCHING...", cat[:12].upper())
@@ -257,9 +272,8 @@ try:
                     except Exception as e:
                         print(f"Server Fetch Fehler: {e}")
 
-                # --- STRATEGIE 3: DRUCKEN ---
+                # STRATEGIE 3: DRUCKEN
                 if card_data:
-                    # Lokale Einstellung anwenden
                     if not PRINT_IMAGES_LOCAL and 'image' in card_data:
                         card_data['image'] = ''
                     print_card(card_data)
